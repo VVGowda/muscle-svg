@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>muscle-svg demo</title>
+<style>
+  :root { --bg:#0f1113; --fg:#e7e9ea; --dim:#8b9199; --line:#23262a; --hl:#e63946; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.5 ui-sans-serif,system-ui,-apple-system,sans-serif;
+         background:var(--bg); color:var(--fg); }
+  header { padding:20px 24px 14px; border-bottom:1px solid var(--line); }
+  h1 { margin:0 0 4px; font-size:17px; font-weight:600; letter-spacing:-.01em; }
+  header p { margin:0; color:var(--dim); font-size:13px; }
+  main { display:grid; grid-template-columns:1fr 300px; gap:24px; padding:24px;
+          align-items:start; }
+  @media (max-width:860px) { main { grid-template-columns:1fr; } }
+  #stage { background:#fff; border-radius:10px; padding:12px; min-height:320px; }
+  #stage svg { width:100%; height:auto; display:block; }
+  aside { border:1px solid var(--line); border-radius:10px; padding:16px;
+          position:sticky; top:24px; }
+  label { display:block; font-size:12px; text-transform:uppercase;
+          letter-spacing:.06em; color:var(--dim); margin:0 0 6px; }
+  select, input[type=file] { width:100%; background:#171a1d; color:var(--fg);
+          border:1px solid var(--line); border-radius:6px; padding:8px 9px;
+          font:inherit; font-size:13px; }
+  .row { margin-bottom:16px; }
+  #readout { font:13px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;
+             color:var(--dim); word-break:break-all; min-height:44px; }
+  #readout b { color:var(--fg); font-weight:600; }
+  .swatches { display:flex; flex-wrap:wrap; gap:6px; }
+  .sw { width:26px; height:26px; border-radius:5px; border:1px solid #0006;
+        cursor:pointer; }
+  button { width:100%; background:#171a1d; color:var(--fg);
+           border:1px solid var(--line); border-radius:6px; padding:9px;
+           font:inherit; font-size:13px; cursor:pointer; }
+  button:hover { border-color:#3a3f45; }
+  #groups { max-height:230px; overflow:auto; font-size:13px; }
+  #groups div { padding:4px 6px; border-radius:4px; cursor:pointer;
+                display:flex; justify-content:space-between; }
+  #groups div:hover { background:#171a1d; }
+  #groups span { color:var(--dim); }
+  .hint { color:var(--dim); font-size:12px; margin-top:10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>muscle-svg - region picker</h1>
+  <p>Hover to identify, click to fill. Proves every region is independently addressable.</p>
+</header>
+
+<main>
+  <div id="stage">
+    <p style="color:#666;padding:40px;text-align:center">
+      Load an SVG from <code>out/</code> to begin.
+    </p>
+  </div>
+
+  <aside>
+    <div class="row">
+      <label for="file">SVG file</label>
+      <input type="file" id="file" accept=".svg">
+      <p class="hint">Try <code>out/hybrid-body-front.svg</code></p>
+    </div>
+
+    <div class="row">
+      <label>Selected</label>
+      <div id="readout">-</div>
+    </div>
+
+    <div class="row">
+      <label for="scope">Click fills</label>
+      <select id="scope">
+        <option value="region">Single region</option>
+        <option value="group">Whole muscle group</option>
+      </select>
+    </div>
+
+    <div class="row">
+      <label>Colour</label>
+      <div class="swatches" id="sw"></div>
+    </div>
+
+    <div class="row">
+      <button id="reset">Reset all fills</button>
+    </div>
+
+    <div class="row">
+      <label>Groups</label>
+      <div id="groups"></div>
+    </div>
+  </aside>
+</main>
+
+<script>
+const COLORS = ['#e63946','#f4a261','#e9c46a','#2a9d8f','#457b9d','#7b6cd9','#c77dff','#495057'];
+let color = COLORS[0], original = new Map();
+
+const stage   = document.getElementById('stage');
+const readout = document.getElementById('readout');
+const scopeEl = document.getElementById('scope');
+const groupsEl= document.getElementById('groups');
+
+// colour swatches
+const swBox = document.getElementById('sw');
+COLORS.forEach((c, i) => {
+  const b = document.createElement('div');
+  b.className = 'sw';
+  b.style.background = c;
+  b.style.outline = i === 0 ? '2px solid #fff' : 'none';
+  b.onclick = () => {
+    color = c;
+    [...swBox.children].forEach(x => x.style.outline = 'none');
+    b.style.outline = '2px solid #fff';
+  };
+  swBox.appendChild(b);
+});
+
+document.getElementById('file').onchange = e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  const r = new FileReader();
+  r.onload = () => { stage.innerHTML = r.result; wire(); };
+  r.readAsText(f);
+};
+
+function fillable(svg) {
+  // the muscle body paths: class "m" (teal builds) or "region" (line-art builds),
+  // always carrying an id. The .edge rim passes have no id, so they are skipped.
+  return [...svg.querySelectorAll('path[id]')].filter(p => {
+    const c = p.getAttribute('class') || '';
+    return /\b(m|region)\b/.test(c) && !/\bedge\b/.test(c);
+  });
+}
+
+function groupOf(p) {
+  const g = p.closest('g[id]');
+  return g ? g.id.replace(/^(front|back)-/, '') : '(none)';
+}
+
+function wire() {
+  const svg = stage.querySelector('svg');
+  if (!svg) return;
+  original.clear();
+  const paths = fillable(svg);
+
+  const counts = {};
+  paths.forEach(p => {
+    original.set(p, p.getAttribute('fill'));
+    const grp = groupOf(p);
+    counts[grp] = (counts[grp] || 0) + 1;
+
+    p.style.cursor = 'pointer';
+    p.addEventListener('mouseenter', () => {
+      readout.innerHTML = `<b>${p.id}</b><br>group: ${grp}`;
+      p.style.filter = 'brightness(1.18)';
+    });
+    p.addEventListener('mouseleave', () => { p.style.filter = ''; });
+    p.addEventListener('click', () => {
+      const targets = scopeEl.value === 'group'
+        ? paths.filter(q => groupOf(q) === grp) : [p];
+      // this is the whole point: a plain setAttribute must win
+      targets.forEach(q => q.setAttribute('fill', color));
+    });
+  });
+
+  groupsEl.innerHTML = '';
+  Object.keys(counts).sort().forEach(g => {
+    const d = document.createElement('div');
+    d.innerHTML = `<span style="color:inherit">${g}</span><span>${counts[g]}</span>`;
+    d.onclick = () => paths.filter(q => groupOf(q) === g)
+                           .forEach(q => q.setAttribute('fill', color));
+    groupsEl.appendChild(d);
+  });
+
+  readout.innerHTML = `<b>${paths.length}</b> fillable regions<br>` +
+                      `${Object.keys(counts).length} groups`;
+}
+
+document.getElementById('reset').onclick = () =>
+  original.forEach((v, p) => v === null ? p.removeAttribute('fill')
+                                        : p.setAttribute('fill', v));
+</script>
+</body>
+</html>

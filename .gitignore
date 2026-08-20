@@ -1,0 +1,16 @@
+# generated output
+out/*
+!out/.gitkeep
+
+# reference art stays local - bring your own (see README)
+input/*.jpg
+input/*.png
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# os
+.DS_Store
