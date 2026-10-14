@@ -1,4 +1,4 @@
-# muscle-svg
+<h1 align="center"><picture><source media="(prefers-color-scheme: dark)" srcset=".github/banner-dark.svg"><source media="(prefers-color-scheme: light)" srcset=".github/banner.svg"><img src=".github/banner.svg" alt="muscle-svg" width="100%"></picture></h1>
 
 Turn flat anatomical line art into clean SVG with **individually named,
 fillable muscle regions** - 90 on the front, 67 on the back, across 41
